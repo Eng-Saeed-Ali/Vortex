@@ -13,7 +13,8 @@ Vortex is an event-driven, highly scalable data refinery. It transforms raw, mes
 
 ## ✨ Core Capabilities (The Problem It Solves)
 - **🧹 Deep Cleansing:** Automatically sanitizes XSS payloads, strips HTML/JS tags, and removes null/empty values recursively.
-- **🌍 Smart Normalization:** - Standardizes global phone numbers to strict **E.164** format using `google-libphonenumber`.
+- **🌍 Smart Normalization:**
+  - Standardizes global phone numbers to strict **E.164** format using `google-libphonenumber`.
   - Normalizes **Arabic text** (NFKC, Tatweel removal, diacritic stripping) for accurate full-text search.
 - **🧠 Intelligent Deduplication:** Employs advanced Fuzzy Matching (Jaro-Winkler) and blocking strategies with `pg_trgm` to detect and merge duplicate companies intelligently via Prisma Transactions.
 - **🕵️‍♂️ Headless Enrichment:** Uses a containerized Playwright Stealth worker to scrape targeted websites for tech-stacks, social links, and emails.
@@ -47,3 +48,30 @@ The system operates through 9 isolated Redis/BullMQ queues, moving data through 
    ```bash
    git clone [https://github.com/Eng-Saeed-Ali/Vortex.git](https://github.com/Eng-Saeed-Ali/Vortex.git)
    cd Vortex
+   ```
+2. Prepare the environment:
+   ```bash
+   cp .env.example .env
+   ```
+3. Spin up the infrastructure (DB & Cache):
+   ```bash
+   docker compose up -d postgres redis
+   ```
+4. Run migrations & generate Prisma client:
+   ```bash
+   npx prisma migrate dev
+   ```
+5. Start the pipeline (Development mode):
+   ```bash
+   npm run start:dev
+   ```
+
+## 🧪 Testing
+The project uses Testcontainers to spin up ephemeral Docker instances for true Integration/E2E testing without mocking the database.
+
+```bash
+npm run test:e2e
+```
+
+## 📄 License
+This project is licensed under the MIT License.
