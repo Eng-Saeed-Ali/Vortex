@@ -1,0 +1,33 @@
+# Node & NestJS Compiled Output
+/dist
+/node_modules
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# Tests
+/coverage
+
+# IDE - VSCode
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# --------------------------
+# Custom Vortex Security
+# --------------------------
+# Env files (Keep .env.example visible, hide the rest)
+.env
+.env.*
+!.env.example
+
+# Docker Overrides
+docker-compose.override.yml

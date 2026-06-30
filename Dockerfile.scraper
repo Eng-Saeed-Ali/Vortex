@@ -1,0 +1,76 @@
+# Multi-stage build for scraper with strict security
+FROM node:20-alpine AS base
+
+# Install system dependencies for Playwright
+FROM base AS deps
+RUN apk add --no-cache \
+    libc6-compat \
+    chromium \
+    nss \
+    freetype \
+    freetype-dev \
+    harfbuzz \
+    ca-certificates \
+    ttf-freefont \
+    udev \
+    && rm -rf /var/cache/apk/*
+
+WORKDIR /app
+
+COPY package.json package-lock.json* ./
+RUN npm ci
+
+# Generate Prisma client
+COPY prisma ./prisma/
+RUN npx prisma generate
+
+# Install Playwright browsers
+RUN npx playwright install --with-deps chromium
+
+# Build stage
+FROM base AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /ms-playwright /ms-playwright
+COPY . .
+RUN npm run build
+
+# Production stage with strict security hardening
+FROM base AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+
+# Create non-root user with specific UID/GID
+RUN addgroup --system --gid 1001 pwgroup && \
+    adduser --system --uid 1001 --ingroup pwgroup --home /home/pwuser --shell /sbin/nologin pwuser
+
+# Create necessary directories with proper permissions
+RUN mkdir -p /home/pwuser/downloads /home/pwuser/.cache /tmp/playwright && \
+    chown -R pwuser:pwgroup /home/pwuser /tmp/playwright
+
+# Copy built application and browsers
+COPY --from=builder --chown=pwuser:pwgroup /app/dist ./dist
+COPY --from=builder --chown=pwuser:pwgroup /app/node_modules ./node_modules
+COPY --from=builder --chown=pwuser:pwgroup /app/package.json ./package.json
+COPY --from=builder --chown=pwuser:pwgroup /app/prisma ./prisma
+COPY --from=deps --chown=pwuser:pwgroup /ms-playwright /ms-playwright
+
+# Security hardening
+# Switch to non-root user
+USER pwuser
+
+# Read-only root filesystem (tmpfs mounts will be added via docker-compose)
+# The following directories need to be writable and will be mounted as tmpfs:
+# - /tmp
+# - /home/pwuser/.cache
+# - /home/pwuser/downloads (or use named volume)
+
+EXPOSE 9230
+
+ENV PORT=9230
+ENV NODE_ENV=production
+
+CMD ["node", "dist/main.js"]
