@@ -18,13 +18,17 @@ import { Queue, Worker, Job, JobsOptions } from 'bullmq';
  * Queue names used throughout the pipeline
  */
 export enum QueueName {
+  CLEANSING = 'cleansing',
+  NORMALIZATION = 'normalization',
+  DEDUPLICATION = 'deduplication',
   ENRICHMENT = 'enrichment',
   VALIDATION = 'validation',
-  NORMALIZATION = 'normalization',
+  STORAGE = 'storage',
   SCRAPING = 'scraping',
   WEBHOOK_DELIVERY = 'webhook-delivery',
   RE_ENRICHMENT = 're-enrichment',
   CLEANUP = 'cleanup',
+  DEAD_LETTER = 'dead-letter',
 }
 
 /**
@@ -45,6 +49,8 @@ export interface QueueOptions {
     };
     removeOnComplete?: boolean | number;
     removeOnFail?: boolean | number;
+    priority?: number;
+    timeout?: number;
   };
 }
 
@@ -53,9 +59,9 @@ export interface QueueOptions {
  */
 export const QUEUE_CONFIGURATIONS: QueueOptions[] = [
   {
-    name: QueueName.ENRICHMENT,
-    concurrency: 8,
-    limiter: { max: 100, duration: 60000 },
+    name: QueueName.CLEANSING,
+    concurrency: 50,
+    limiter: { max: 1000, duration: 60000 },
     defaultJobOptions: {
       attempts: 3,
       backoff: { type: 'exponential', delay: 5000 },
@@ -64,25 +70,58 @@ export const QUEUE_CONFIGURATIONS: QueueOptions[] = [
     },
   },
   {
-    name: QueueName.VALIDATION,
-    concurrency: 10,
-    limiter: { max: 200, duration: 60000 },
-    defaultJobOptions: {
-      attempts: 3,
-      backoff: { type: 'exponential', delay: 3000 },
-      removeOnComplete: 200,
-      removeOnFail: 100,
-    },
-  },
-  {
     name: QueueName.NORMALIZATION,
     concurrency: 10,
     limiter: { max: 200, duration: 60000 },
     defaultJobOptions: {
       attempts: 3,
-      backoff: { type: 'exponential', delay: 3000 },
+      backoff: { type: 'exponential', delay: 5000 },
       removeOnComplete: 200,
       removeOnFail: 100,
+    },
+  },
+  {
+    name: QueueName.DEDUPLICATION,
+    concurrency: 5,
+    defaultJobOptions: {
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 10000 },
+      removeOnComplete: 50,
+      removeOnFail: 25,
+    },
+  },
+  {
+    name: QueueName.ENRICHMENT,
+    concurrency: 8,
+    limiter: { max: 10, duration: 60000 },
+    defaultJobOptions: {
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 30000 },
+      priority: 10,
+      removeOnComplete: 50,
+      removeOnFail: 25,
+      timeout: 300000,
+    },
+  },
+  {
+    name: QueueName.VALIDATION,
+    concurrency: 20,
+    limiter: { max: 100, duration: 60000 },
+    defaultJobOptions: {
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 10000 },
+      removeOnComplete: 100,
+      removeOnFail: 50,
+    },
+  },
+  {
+    name: QueueName.STORAGE,
+    concurrency: 10,
+    defaultJobOptions: {
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 5000 },
+      removeOnComplete: 100,
+      removeOnFail: 50,
     },
   },
   {
@@ -98,24 +137,24 @@ export const QUEUE_CONFIGURATIONS: QueueOptions[] = [
   },
   {
     name: QueueName.WEBHOOK_DELIVERY,
-    concurrency: 20,
-    limiter: { max: 500, duration: 60000 },
+    concurrency: 15,
     defaultJobOptions: {
       attempts: 5,
-      backoff: { type: 'exponential', delay: 30000 },
-      removeOnComplete: 500,
-      removeOnFail: 200,
+      backoff: { type: 'exponential', delay: 60000 },
+      priority: 10,
+      removeOnComplete: 100,
+      removeOnFail: 50,
     },
   },
   {
     name: QueueName.RE_ENRICHMENT,
-    concurrency: 4,
-    limiter: { max: 50, duration: 60000 },
+    concurrency: 2,
     defaultJobOptions: {
       attempts: 2,
       backoff: { type: 'exponential', delay: 60000 },
-      removeOnComplete: 50,
-      removeOnFail: 25,
+      priority: 1,
+      removeOnComplete: 20,
+      removeOnFail: 10,
     },
   },
   {
@@ -127,6 +166,15 @@ export const QUEUE_CONFIGURATIONS: QueueOptions[] = [
       backoff: { type: 'fixed', delay: 0 },
       removeOnComplete: 10,
       removeOnFail: 5,
+    },
+  },
+  {
+    name: QueueName.DEAD_LETTER,
+    concurrency: 0,
+    defaultJobOptions: {
+      attempts: 1,
+      removeOnComplete: 0,
+      removeOnFail: 0,
     },
   },
 ];

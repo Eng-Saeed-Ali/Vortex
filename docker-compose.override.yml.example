@@ -28,12 +28,14 @@ services:
       - ./package.json:/app/package.json
       - ./tsconfig.json:/app/tsconfig.json
       - ./nest-cli.json:/app/nest-cli.json
+      - /app/dist
     command: npm run start:dev
     ports:
       - "3000:3000"
       - "9229:9229"  # Debug port
     # Development overrides - relaxed security
-    user: "node"
+    # Run as root to avoid EACCES permission issues with rmdir /app/dist
+    user: "0"
     read_only: false
     cap_drop: []
     cap_add: []

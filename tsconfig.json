@@ -22,7 +22,8 @@
     "strictBindCallApply": true,
     "noFallthroughCasesInSwitch": true,
     "paths": {
-      "@vortex/generated/prisma": ["./generated/prisma"]
+      "@vortex/generated/prisma": ["./generated/prisma"],
+      "*": ["./src/types/*"]
     }
   }
 }
