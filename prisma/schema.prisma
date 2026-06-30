@@ -1,0 +1,213 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+/**
+ * Vortex Pipeline - Prisma Schema
+ * 
+ * This schema implements the exact database design from DATABASE_SCHEMA.md
+ * with PostgreSQL 16+, PostGIS 3.4+, pgcrypto, pg_trgm extensions.
+ * 
+ * Key design decisions:
+ * - UUID primary keys with uuid-ossp extension
+ * - Soft deletes via deleted_at for PDPL/GDPR compliance
+ * - PostGIS geography(Point, 4326) for spatial queries
+ * - pgcrypto BYTEA columns for encrypted PII (email_enc, phone_enc)
+ * - Generated columns for search_vector (tsvector) and next_re_enrich_at
+ * - GIN indexes for trigram fuzzy search (pg_trgm) and full-text search
+ * - GiST index for PostGIS spatial queries
+ * - Partial indexes for soft-delete filtering and status filtering
+ * 
+ * Extensions required (run once via migration):
+ * CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+ * CREATE EXTENSION IF NOT EXISTS "postgis";
+ * CREATE EXTENSION IF NOT EXISTS "pg_trgm";
+ * CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+ * CREATE EXTENSION IF NOT EXISTS "btree_gin";
+ * 
+ * @see docs/architecture/DATABASE_SCHEMA.md for full DDL and design rationale
+ */
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  // URL moved to prisma.config.ts for Prisma 7+
+}
+
+/// RawLeads - Immutable ingestion log for audit compliance
+/// 
+/// @see DATABASE_SCHEMA.md section 3.2
+model RawLead {
+  id        String   @id @default(uuid()) @db.Uuid
+  source    String   @db.VarChar(100)
+  sourceId  String   @map("source_id") @db.VarChar(255)
+  payload   Json
+  metadata  Json     @default("{}")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz
+
+  normalizedLead NormalizedLead?
+
+  @@unique([source, sourceId], name: "uq_raw_leads_source_source_id")
+  @@index([createdAt(sort: Desc)], name: "idx_raw_leads_created_at")
+  @@index([deletedAt], name: "idx_raw_leads_deleted_at")
+  @@map("raw_leads")
+}
+
+/// NormalizedLeads - Cleansed, standardized, deduplication-ready leads
+/// 
+/// Contains PostGIS geography(Point, 4326) for spatial queries
+/// and generated tsvector for full-text search (Arabic + simple)
+/// 
+/// @see DATABASE_SCHEMA.md section 3.3
+model NormalizedLead {
+  id                  String   @id @default(uuid()) @db.Uuid
+  rawLeadId           String   @unique @map("raw_lead_id") @db.Uuid
+  rawLead             RawLead  @relation(fields: [rawLeadId], references: [id], onDelete: Cascade)
+
+  // Core normalized fields
+  normalizedName      String   @map("normalized_name") @db.VarChar(500)
+  normalizedPhone     String   @map("normalized_phone") @db.VarChar(20)
+  countryCode         String   @map("country_code") @db.Char(2)
+  normalizedEmail     String?  @map("normalized_email") @db.VarChar(320)
+  normalizedAddress   String?  @map("normalized_address") @db.Text
+  addressComponents   Json     @default("{}") @map("address_components")
+
+  // Deduplication keys
+  googlePlaceId       String?  @unique @map("google_place_id") @db.VarChar(255)
+  osmId               String?  @unique @map("osm_id") @db.VarChar(100)
+
+  // Generated columns (managed by DB, not Prisma)
+  searchVector        Unsupported("tsvector") @map("search_vector")
+  location            Unsupported("geography") @map("location") // PostGIS Point
+
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt           DateTime? @map("deleted_at") @db.Timestamptz
+
+  enrichedLead        EnrichedLead?
+
+  @@index([rawLeadId], name: "idx_normalized_leads_raw_lead_id")
+  @@index([updatedAt(sort: Desc)], name: "idx_normalized_leads_updated_at")
+  // Partial indexes and GIN/GiST indexes created via raw SQL migration
+  @@map("normalized_leads")
+}
+
+/// EnrichedLeads - Final production records with encrypted PII
+/// 
+/// PII (email, phone) encrypted via application-layer AES-256-GCM
+/// pgcrypto provides defense-in-depth at rest
+/// 
+/// @see DATABASE_SCHEMA.md section 3.4
+model EnrichedLead {
+  id                    String   @id @default(uuid()) @db.Uuid
+  normalizedLeadId      String   @unique @map("normalized_lead_id") @db.Uuid
+  normalizedLead        NormalizedLead @relation(fields: [normalizedLeadId], references: [id], onDelete: Cascade)
+
+  // Encrypted PII (application-layer AES-256-GCM + pgcrypto defense-in-depth)
+  emailEnc              Bytes?   @map("email_enc")
+  phoneEnc              Bytes?   @map("phone_enc")
+
+  // Enrichment data (non-PII, queryable)
+  socialLinks           Json     @default("{}") @map("social_links")
+  techStack             Json     @default("[]") @map("tech_stack")
+  qualityScore          Int      @default(0) @map("quality_score")
+  enrichmentStatus      String   @default("pending") @map("enrichment_status")
+  lastEnrichedAt        DateTime? @map("last_enriched_at") @db.Timestamptz
+  nextReEnrichAt        DateTime? @map("next_re_enrich_at") @db.Timestamptz // Generated column
+
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt             DateTime? @map("deleted_at") @db.Timestamptz
+
+  enrichmentJobs        EnrichmentJob[]
+  webhookDeliveries     WebhookDelivery[]
+  auditLogs             AuditLog[]
+
+  @@index([enrichmentStatus, nextReEnrichAt], name: "idx_enriched_leads_status_next_reenrich")
+  @@index([qualityScore(sort: Desc)], name: "idx_enriched_leads_quality_score")
+  @@index([lastEnrichedAt(sort: Desc)], name: "idx_enriched_leads_last_enriched")
+  // Partial indexes created via raw SQL migration
+  @@map("enriched_leads")
+}
+
+/// EnrichmentJobs - Job history, debugging, and observability
+/// 
+/// Partitioned by month (created_at) for retention (12 months)
+/// 
+/// @see DATABASE_SCHEMA.md section 3.5
+model EnrichmentJob {
+  id                String   @id @default(uuid()) @db.Uuid
+  enrichedLeadId    String   @map("enriched_lead_id") @db.Uuid
+  enrichedLead      EnrichedLead @relation(fields: [enrichedLeadId], references: [id], onDelete: Cascade)
+
+  jobType           String   @map("job_type")
+  status            String   @default("queued")
+  attempts          Int      @default(0)
+  inputData         Json     @default("{}") @map("input_data")
+  outputData        Json     @default("{}") @map("output_data")
+  errorMessage      String?  @map("error_message") @db.Text
+  startedAt         DateTime? @map("started_at") @db.Timestamptz
+  completedAt       DateTime? @map("completed_at") @db.Timestamptz
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([enrichedLeadId, status], name: "idx_enrichment_jobs_lead_status")
+  @@index([createdAt(sort: Desc)], name: "idx_enrichment_jobs_created_at")
+  @@index([createdAt], name: "idx_enrichment_jobs_dead_letter")
+  // Partial indexes created via raw SQL migration
+  @@map("enrichment_jobs")
+}
+
+/// AuditLogs - Compliance, forensics, and distributed tracing
+/// 
+/// Partitioned by month (created_at) for 7-year PDPL retention
+/// 
+/// @see DATABASE_SCHEMA.md section 3.6
+model AuditLog {
+  id             String   @id @default(uuid()) @db.Uuid
+  entityId       String   @map("entity_id") @db.Uuid
+  entityType     String   @map("entity_type") @db.VarChar(50)
+  action         String   @db.VarChar(30)
+  userId         String?  @map("user_id") @db.Uuid
+  beforeState    Json?    @map("before_state")
+  afterState     Json?    @map("after_state")
+  correlationId  String?  @map("correlation_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  // Relation to EnrichedLead
+  enrichedLead   EnrichedLead? @relation(fields: [entityId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId], name: "idx_audit_logs_entity")
+  @@index([correlationId], name: "idx_audit_logs_correlation")
+  @@index([createdAt(sort: Desc)], name: "idx_audit_logs_created_at")
+  @@index([userId, action, createdAt(sort: Desc)], name: "idx_audit_logs_user_action")
+  @@map("audit_logs")
+}
+
+/// WebhookDeliveries - Outbound reliability with retry scheduling
+/// 
+/// Partial index on next_retry_at for pending deliveries (attempts < 5)
+/// 
+/// @see DATABASE_SCHEMA.md section 3.7
+model WebhookDelivery {
+  id              String   @id @default(uuid()) @db.Uuid
+  enrichedLeadId  String   @map("enriched_lead_id") @db.Uuid
+  enrichedLead    EnrichedLead @relation(fields: [enrichedLeadId], references: [id], onDelete: Cascade)
+
+  webhookUrl      String   @map("webhook_url") @db.Text
+  payload         Json
+  statusCode      Int?     @map("status_code")
+  attempts        Int      @default(0)
+  nextRetryAt     DateTime? @map("next_retry_at") @db.Timestamptz
+  deliveredAt     DateTime? @map("delivered_at") @db.Timestamptz
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([nextRetryAt], name: "idx_webhook_deliveries_pending")
+  @@index([enrichedLeadId, createdAt(sort: Desc)], name: "idx_webhook_deliveries_lead")
+  // Partial indexes created via raw SQL migration
+  @@map("webhook_deliveries")
+}

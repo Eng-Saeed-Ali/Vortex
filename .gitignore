@@ -31,3 +31,4 @@ Thumbs.db
 
 # Docker Overrides
 docker-compose.override.yml
+/generated/prisma
