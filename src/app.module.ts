@@ -14,6 +14,7 @@ import { CryptoModule } from './shared/crypto/crypto.module';
 import { IngestionModule } from './modules/ingestion/ingestion.module';
 import { CleansingModule } from './modules/cleansing/cleansing.module';
 import { NormalizationModule } from './modules/normalization/normalization.module';
+import { DeduplicationModule } from './modules/deduplication/deduplication.module';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { NormalizationModule } from './modules/normalization/normalization.modul
     IngestionModule,
     CleansingModule,
     NormalizationModule,
+    DeduplicationModule,
   ],
   controllers: [AppController],
   providers: [AppService],

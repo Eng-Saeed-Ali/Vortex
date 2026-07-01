@@ -107,6 +107,8 @@ model EnrichedLead {
   id                    String   @id @default(uuid()) @db.Uuid
   normalizedLeadId      String   @unique @map("normalized_lead_id") @db.Uuid
   normalizedLead        NormalizedLead @relation(fields: [normalizedLeadId], references: [id], onDelete: Cascade)
+  masterLeadId          String?  @unique @map("master_lead_id") @db.Uuid
+  masterLead            MasterLead? @relation(fields: [masterLeadId], references: [id], onDelete: SetNull)
 
   // Encrypted PII (application-layer AES-256-GCM + pgcrypto defense-in-depth)
   emailEnc              Bytes?   @map("email_enc")
@@ -131,6 +133,7 @@ model EnrichedLead {
   @@index([enrichmentStatus, nextReEnrichAt], name: "idx_enriched_leads_status_next_reenrich")
   @@index([qualityScore(sort: Desc)], name: "idx_enriched_leads_quality_score")
   @@index([lastEnrichedAt(sort: Desc)], name: "idx_enriched_leads_last_enriched")
+  @@index([masterLeadId], name: "idx_enriched_leads_master_lead_id")
   // Partial indexes created via raw SQL migration
   @@map("enriched_leads")
 }
@@ -186,6 +189,46 @@ model AuditLog {
   @@index([createdAt(sort: Desc)], name: "idx_audit_logs_created_at")
   @@index([userId, action, createdAt(sort: Desc)], name: "idx_audit_logs_user_action")
   @@map("audit_logs")
+}
+
+/// MasterLeads - Deduplicated, merged lead records
+/// 
+/// Core entity after deduplication merge, ready for enrichment
+/// 
+/// @see DATABASE_SCHEMA.md section 3.8
+model MasterLead {
+  id                  String   @id @default(uuid()) @db.Uuid
+  normalizedName      String   @map("normalized_name") @db.VarChar(500)
+  phoneE164           String?  @map("phone_e164") @db.VarChar(20)
+  phone2E164          String?  @map("phone2_e164") @db.VarChar(20)
+  email               String?  @db.VarChar(320)
+  website             String?  @db.Text
+  addressComponents   Json     @default("{}") @map("address_components")
+  formattedAddress    String?  @map("formatted_address") @db.Text
+  description         String?  @db.Text
+  categories          String[] @default([]) @db.Text
+  googlePlaceId       String?  @unique @map("google_place_id") @db.VarChar(255)
+  osmId               String?  @unique @map("osm_id") @db.VarChar(100)
+  source              String   @db.VarChar(100)
+  sourceId            String   @map("source_id") @db.VarChar(255)
+  mergedSources       String[] @default([]) @map("merged_sources") @db.Text
+  qualityScore        Int      @default(0) @map("quality_score")
+  quality             String   @default("low") @db.VarChar(20)
+  socialLinks         Json     @default("{}") @map("social_links")
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt           DateTime? @map("deleted_at") @db.Timestamptz
+
+  enrichedLead        EnrichedLead?
+
+  @@index([source, sourceId], name: "idx_master_leads_source_source_id")
+  @@index([phoneE164], name: "idx_master_leads_phone_e164")
+  @@index([email], name: "idx_master_leads_email")
+  @@index([qualityScore(sort: Desc)], name: "idx_master_leads_quality_score")
+  @@index([createdAt(sort: Desc)], name: "idx_master_leads_created_at")
+  @@index([deletedAt], name: "idx_master_leads_deleted_at")
+  // Partial indexes for city extracted from addressComponents via GIN
+  @@map("master_leads")
 }
 
 /// WebhookDeliveries - Outbound reliability with retry scheduling
